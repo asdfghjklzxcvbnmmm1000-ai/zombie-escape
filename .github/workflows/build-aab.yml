@@ -1,0 +1,51 @@
+name: Build Android AAB
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          find . -name "package.json" -execdir npm install \;
+
+      - name: Build Web Assets & Sync Capacitor
+        run: |
+          find . -name "package.json" -execdir npx cap sync android \; || true
+
+      - name: Build Android AAB
+        run: |
+          ANDROID_DIR=$(find . -maxdepth 4 -type d -name "android" | head -n 1)
+          if [ -n "$ANDROID_DIR" ]; then
+            cd "$ANDROID_DIR"
+            chmod +x gradlew
+            ./gradlew bundleRelease
+          else
+            echo "Android directory not found!"
+            exit 1
+          fi
+
+      - name: Upload AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: |
+            **/app/build/outputs/bundle/release/*.aab
