@@ -1,0 +1,7 @@
+{
+  "appId": "com.snowzombie.escape",
+  "appName": "Snow Zombie Escape",
+  "webDir": "www",
+  "server": { "androidScheme": "https" },
+  "backgroundColor": "#0b1d33"
+}

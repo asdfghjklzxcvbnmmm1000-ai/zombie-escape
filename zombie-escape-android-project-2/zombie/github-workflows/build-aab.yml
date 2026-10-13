@@ -1,0 +1,72 @@
+name: Build AAB and APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEY: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install dependencies
+        run: npm install
+      - name: Prepare web files (bundle libraries locally)
+        env:
+          ADMOB_INTER: ${{ vars.ADMOB_INTERSTITIAL }}
+          ADMOB_REWARD: ${{ vars.ADMOB_REWARDED }}
+        run: |
+          mkdir -p www/lib
+          cp index.html www/index.html
+          curl -fsSL https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js -o www/lib/three.min.js
+          curl -fsSL https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/fflate.min.js -o www/lib/fflate.min.js
+          curl -fsSL https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js -o www/lib/FBXLoader.js
+          curl -fsSL https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js -o www/lib/GLTFLoader.js
+          curl -fsSL https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js -o www/lib/SkeletonUtils.js
+          sed -i 's#https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js#lib/three.min.js#; s#https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/fflate.min.js#lib/fflate.min.js#; s#https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js#lib/FBXLoader.js#; s#https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js#lib/GLTFLoader.js#; s#https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js#lib/SkeletonUtils.js#' www/index.html
+          grep -c "lib/three.min.js" www/index.html
+          if [ -n "$ADMOB_INTER" ]; then sed -i "s#ca-app-pub-3940256099942544/1033173712#$ADMOB_INTER#" www/index.html; fi
+          if [ -n "$ADMOB_REWARD" ]; then sed -i "s#ca-app-pub-3940256099942544/5224354917#$ADMOB_REWARD#" www/index.html; fi
+      - name: Create Android project
+        env:
+          ADMOB_APP_ID: ${{ vars.ADMOB_APP_ID }}
+        run: |
+          npx cap add android
+          APPID="${ADMOB_APP_ID:-ca-app-pub-3940256099942544~3347511713}"
+          sed -i "s#</application>#<meta-data android:name=\"com.google.android.gms.ads.APPLICATION_ID\" android:value=\"$APPID\"/></application>#" android/app/src/main/AndroidManifest.xml
+          sed -i 's/versionCode 1/versionCode ${{ github.run_number }}/' android/app/build.gradle
+          sed -i 's/android:configChanges=/android:screenOrientation="portrait" android:configChanges=/' android/app/src/main/AndroidManifest.xml
+          npx cap sync android
+      - name: Build debug APK (for quick phone test)
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug
+      - name: Build release AAB
+        working-directory: android
+        run: ./gradlew bundleRelease
+      - name: Sign AAB
+        if: env.HAS_KEY == 'true'
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: android/app/build/outputs/bundle/release
+          signingKeyBase64: ${{ secrets.KEYSTORE_BASE64 }}
+          alias: ${{ secrets.KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab
+          path: android/app/build/outputs/bundle/release/*.aab
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-debug
+          path: android/app/build/outputs/apk/debug/*.apk
